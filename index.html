@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-title" content="Cashback Ferrelum">
 <meta name="mobile-web-app-capable" content="yes">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -929,6 +929,10 @@ settingsSave.addEventListener('click', async ()=>{
 });
 
 camBtn.addEventListener('click', async ()=>{
+  if(typeof jsQR === 'undefined'){
+    showToast('No se pudo cargar el lector de códigos (revisa tu conexión a internet) — usa la búsqueda manual mientras tanto.');
+    return;
+  }
   try{
     camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     camVideo.srcObject = camStream;
