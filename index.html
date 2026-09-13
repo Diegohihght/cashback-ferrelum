@@ -340,6 +340,39 @@ let cashbackPercent = 2;
 let camStream = null;
 let camRAF = null;
 
+// --- Soporte para lector de código físico (tipo teclado) ---
+let scanBuffer = '';
+let lastKeyTime = 0;
+
+document.addEventListener('keydown', (e) => {
+  // No interferir si el usuario está escribiendo a mano en un input/textarea
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+  const now = Date.now();
+  const elapsed = now - lastKeyTime;
+  lastKeyTime = now;
+
+  if (e.key === 'Enter') {
+    // Un lector manda muchos caracteres y luego Enter;
+    // una persona presionando Enter suelta no acumula nada.
+    if (scanBuffer.length >= 6) {
+      e.preventDefault();
+      const scanned = scanBuffer;
+      scanBuffer = '';
+      phoneInput.value = scanned;
+      handleSearch(scanned);
+    }
+    return;
+  }
+
+  if (e.key.length === 1) {
+    // Si pasó más de 60ms entre teclas, es una ráfaga nueva (no es el lector)
+    scanBuffer = (elapsed > 60) ? e.key : scanBuffer + e.key;
+  }
+});
+
 function showToast(msg){
   toastEl.textContent = msg;
   toastEl.classList.add('show');
