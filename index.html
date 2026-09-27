@@ -368,11 +368,25 @@ function money(n){
   return '$' + Number(n).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 
-function credentialFor(phone){ return 'FRL-' + phone; }
+const TOKEN_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+function generateToken(){
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  let t = '';
+  for(let i = 0; i < bytes.length; i++){ t += TOKEN_ALPHABET[bytes[i] % TOKEN_ALPHABET.length]; }
+  return t;
+}
+function credentialFor(client){ return 'FRL-' + client.token; }
+// Devuelve la clave (12 caracteres) si el texto tiene formato de credencial, o null.
+// Tolera minúsculas y que el lector escriba el guion como otro símbolo.
+function parseCredential(raw){
+  const m = String(raw).trim().toUpperCase().match(/^FRL[^A-Z0-9]?([2-9A-HJ-NP-Z]{12})$/);
+  return m ? m[1] : null;
+}
 const ADMIN_PASSWORD = '2821012184';
 
-function clientLinkFor(phone){
-  return window.location.origin + window.location.pathname + '#cred=' + encodeURIComponent(credentialFor(phone));
+function clientLinkFor(client){
+  return window.location.origin + window.location.pathname + '#cred=' + encodeURIComponent(credentialFor(client));
 }
 
 async function getConfig(){
@@ -390,7 +404,21 @@ async function getClient(phone){
   try{
     if(!firebaseOk){ throw new Error('Firebase no disponible'); }
     const doc = await db.collection('clients').doc(phone).get();
-    return doc.exists ? doc.data() : null;
+    if(!doc.exists) return null;
+    const data = doc.data();
+    if(!data.token){
+      data.token = generateToken();
+      await db.collection('clients').doc(phone).set({ token: data.token }, { merge: true });
+    }
+    return data;
+  }catch(e){ lastDbError = e; console.error(e); return null; }
+}
+async function getClientByToken(token){
+  lastDbError = null;
+  try{
+    if(!firebaseOk){ throw new Error('Firebase no disponible'); }
+    const snap = await db.collection('clients').where('token', '==', token).limit(1).get();
+    return snap.empty ? null : snap.docs[0].data();
   }catch(e){ lastDbError = e; console.error(e); return null; }
 }
 async function saveClient(client){
@@ -434,6 +462,7 @@ function renderNewClientForm(phone){
     if(!name){ showToast('Escribe el nombre del cliente'); return; }
     const client = {
       phone,
+      token: generateToken(),
       name,
       domicilio: document.getElementById('fAddress').value.trim(),
       ocupacion: document.getElementById('fOcc').value.trim(),
@@ -466,17 +495,17 @@ function renderCredentialReveal(client){
     <button class="cred-continue" id="credContinueBtn">Continuar al perfil del cliente →</button>
   `;
   new QRCode(document.getElementById('credQr'), {
-    text: credentialFor(client.phone),
+    text: credentialFor(client),
     width: 170, height: 170,
     colorDark: '#211F1A', colorLight: '#FFFFFF'
   });
   document.getElementById('copyImgBtn').addEventListener('click', ()=> copyOrDownloadCredentialImage(client));
   document.getElementById('downloadImgBtn').addEventListener('click', ()=> downloadCredentialImage(client));
   document.getElementById('copyLinkBtn').addEventListener('click', ()=>{
-    navigator.clipboard.writeText(clientLinkFor(client.phone)).then(()=> showToast('Enlace copiado'));
+    navigator.clipboard.writeText(clientLinkFor(client)).then(()=> showToast('Enlace copiado'));
   });
   document.getElementById('copyCodeBtn').addEventListener('click', ()=>{
-    navigator.clipboard.writeText(credentialFor(client.phone)).then(()=> showToast('Código copiado'));
+    navigator.clipboard.writeText(credentialFor(client)).then(()=> showToast('Código copiado'));
   });
   document.getElementById('credContinueBtn').addEventListener('click', ()=> renderClient(client, true));
 }
@@ -595,7 +624,7 @@ async function generateCredentialImage(client){
   roundRectPath(ctx, panelX, panelY, panelSize, panelSize, 30);
   ctx.fill();
 
-  const qrDataUrl = await getQrDataUrl(credentialFor(client.phone), 340);
+  const qrDataUrl = await getQrDataUrl(credentialFor(client), 340);
   const qrImg = await loadImage(qrDataUrl);
   const qrPad = 45;
   ctx.drawImage(qrImg, panelX + qrPad, panelY + qrPad, panelSize - qrPad*2, panelSize - qrPad*2);
@@ -699,6 +728,7 @@ function renderClient(client, unlocked){
         <div class="drow"><span class="dlabel">Años como cliente</span><span class="dval">${client.anosCliente || 0}</span></div>
         <div class="drow"><span class="dlabel">Facebook</span><span class="dval">${client.facebook || 'No especificado'}</span></div>
         <button class="edit-link" id="editClientBtn">Editar datos</button>
+        <button class="edit-link" id="regenCredBtn" style="margin-left:14px;color:var(--danger);">Regenerar credencial</button>
       </div>
 
       <div class="balance-block">
@@ -723,7 +753,7 @@ function renderClient(client, unlocked){
     </div>`;
 
   new QRCode(document.getElementById('qrcode'), {
-    text: credentialFor(client.phone),
+    text: credentialFor(client),
     width: 84, height: 84,
     colorDark: '#211F1A', colorLight: '#FFFFFF'
   });
@@ -732,12 +762,19 @@ function renderClient(client, unlocked){
     document.getElementById('detailsBox').classList.toggle('show');
   });
   document.getElementById('editClientBtn').addEventListener('click', ()=> renderEditForm(client));
+  document.getElementById('regenCredBtn').addEventListener('click', async ()=>{
+    if(!confirm('Esto invalida el QR y el enlace anteriores de este cliente. ¿Generar una credencial nueva?')) return;
+    client.token = generateToken();
+    await saveClient(client);
+    showToast('Credencial nueva generada');
+    renderCredentialReveal(client);
+  });
   document.getElementById('copyCredBtn').addEventListener('click', ()=>{
-    navigator.clipboard.writeText(credentialFor(client.phone)).then(()=> showToast('Código copiado'));
+    navigator.clipboard.writeText(credentialFor(client)).then(()=> showToast('Código copiado'));
   });
   document.getElementById('copyImgBtn2').addEventListener('click', ()=> downloadCredentialImage(client));
   document.getElementById('copyLinkBtn2').addEventListener('click', ()=>{
-    navigator.clipboard.writeText(clientLinkFor(client.phone)).then(()=> showToast('Enlace copiado'));
+    navigator.clipboard.writeText(clientLinkFor(client)).then(()=> showToast('Enlace copiado'));
   });
   const msgHandler = ()=>{
     navigator.clipboard.writeText(messengerMessage(client));
@@ -841,10 +878,13 @@ async function handleSearch(rawValue){
   const raw = (rawValue !== undefined ? rawValue : phoneInput.value).trim();
   if(!raw){ showToast('Escribe o escanea un código'); return; }
 
-  const credMatch = raw.match(/^FRL[^A-Za-z0-9]?(\d{8,15})$/i);
-  if(credMatch){
-    const phone = credMatch[1];
-    const client = await getClient(phone);
+  const token = parseCredential(raw);
+  if(!token && /^FRL/i.test(raw)){
+    showToast('Credencial no válida o desactualizada. Pide al cliente su credencial más reciente.');
+    return;
+  }
+  if(token){
+    const client = await getClientByToken(token);
     if(client){ renderClient(client, true); }
     else if(lastDbError){ showToast('No hay conexión con la base de datos. Revisa internet e intenta de nuevo.'); }
     else { showToast('Código no reconocido: ese cliente no está registrado'); }
@@ -891,8 +931,8 @@ function renderClientViewError(){
     </div>`;
 }
 
-async function renderClientView(phone){
-  const client = await getClient(phone);
+async function renderClientView(token){
+  const client = await getClientByToken(token);
   const wrap = document.getElementById('clientApp');
   if(!client){ renderClientViewError(); return; }
   const b64 = document.querySelector('.brand img').getAttribute('src');
@@ -924,11 +964,11 @@ async function renderClientView(phone){
       <button class="cv-refresh" id="cvRefreshBtn">Actualizar saldo</button>
     </div>`;
   new QRCode(document.getElementById('cvQr'), {
-    text: credentialFor(client.phone),
+    text: credentialFor(client),
     width: 84, height: 84,
     colorDark: '#211F1A', colorLight: '#FFFFFF'
   });
-  document.getElementById('cvRefreshBtn').addEventListener('click', ()=> renderClientView(phone));
+  document.getElementById('cvRefreshBtn').addEventListener('click', ()=> renderClientView(token));
 }
 
 searchBtn.addEventListener('click', ()=> handleSearch());
@@ -1023,11 +1063,11 @@ async function routeByHash(){
   }
 
   if(cred){
-    const credMatch = cred.match(/^FRL-(\d{8,15})$/i);
+    const credToken = parseCredential(cred);
     document.getElementById('staffApp').style.display = 'none';
     document.getElementById('clientApp').style.display = 'block';
-    if(credMatch){
-      await renderClientView(credMatch[1]);
+    if(credToken){
+      await renderClientView(credToken);
     } else {
       renderClientViewError();
     }
@@ -1073,7 +1113,7 @@ document.addEventListener('keydown', (e)=>{
   if(e.key === 'Enter'){
     const code = scanBuffer;
     scanBuffer = '';
-    if(/^FRL[^A-Za-z0-9]?\d{8,15}$/i.test(code)){
+    if(parseCredential(code)){
       e.preventDefault();
       handleSearch(code);
     }
