@@ -10,7 +10,16 @@
 <meta name="apple-mobile-web-app-title" content="Cashback Ferrelum">
 <meta name="mobile-web-app-capable" content="yes">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js" onerror="
+  var s2 = document.createElement('script');
+  s2.src = 'https://unpkg.com/jsqr/dist/jsQR.js';
+  s2.onerror = function(){
+    var s3 = document.createElement('script');
+    s3.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js';
+    document.head.appendChild(s3);
+  };
+  document.head.appendChild(s2);
+"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -339,39 +348,6 @@ let currentMode = null;
 let cashbackPercent = 2;
 let camStream = null;
 let camRAF = null;
-
-// --- Soporte para lector de código físico (tipo teclado) ---
-let scanBuffer = '';
-let lastKeyTime = 0;
-
-document.addEventListener('keydown', (e) => {
-  // No interferir si el usuario está escribiendo a mano en un input/textarea
-  const tag = e.target.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-  if (e.ctrlKey || e.altKey || e.metaKey) return;
-
-  const now = Date.now();
-  const elapsed = now - lastKeyTime;
-  lastKeyTime = now;
-
-  if (e.key === 'Enter') {
-    // Un lector manda muchos caracteres y luego Enter;
-    // una persona presionando Enter suelta no acumula nada.
-    if (scanBuffer.length >= 6) {
-      e.preventDefault();
-      const scanned = scanBuffer;
-      scanBuffer = '';
-      phoneInput.value = scanned;
-      handleSearch(scanned);
-    }
-    return;
-  }
-
-  if (e.key.length === 1) {
-    // Si pasó más de 60ms entre teclas, es una ráfaga nueva (no es el lector)
-    scanBuffer = (elapsed > 60) ? e.key : scanBuffer + e.key;
-  }
-});
 
 function showToast(msg){
   toastEl.textContent = msg;
@@ -961,8 +937,21 @@ settingsSave.addEventListener('click', async ()=>{
   showToast('Ajustes guardados');
 });
 
+function waitForJsQR(maxWaitMs){
+  return new Promise((resolve)=>{
+    const start = Date.now();
+    const check = ()=>{
+      if(typeof jsQR !== 'undefined'){ resolve(true); return; }
+      if(Date.now() - start > maxWaitMs){ resolve(false); return; }
+      setTimeout(check, 150);
+    };
+    check();
+  });
+}
+
 camBtn.addEventListener('click', async ()=>{
-  if(typeof jsQR === 'undefined'){
+  const ready = await waitForJsQR(3000);
+  if(!ready){
     showToast('No se pudo cargar el lector de códigos (revisa tu conexión a internet) — usa la búsqueda manual mientras tanto.');
     return;
   }
@@ -990,7 +979,15 @@ camBtn.addEventListener('click', async ()=>{
     };
     camRAF = requestAnimationFrame(scanFrame);
   }catch(e){
-    showToast('No se pudo abrir la cámara. Usa el lector de código de tu caja o escribe el teléfono.');
+    let msg = 'No se pudo abrir la cámara.';
+    if(e && e.name === 'NotAllowedError'){
+      msg = 'Permiso de cámara denegado. Revisa los ajustes de tu navegador y vuelve a intentar.';
+    } else if(e && e.name === 'NotFoundError'){
+      msg = 'No se encontró ninguna cámara en este dispositivo.';
+    } else if(e && e.name === 'NotReadableError'){
+      msg = 'La cámara está siendo usada por otra app ahora mismo.';
+    }
+    showToast(msg + ' Puedes escribir el teléfono manualmente mientras tanto.');
   }
 });
 function stopCam(){
