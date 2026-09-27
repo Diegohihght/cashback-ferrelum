@@ -37,8 +37,16 @@
     messagingSenderId: "409491424330",
     appId: "1:409491424330:web:9062620026cd536b3bd2b3"
   };
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
+  let db = null;
+  let firebaseOk = false;
+  let lastDbError = null;
+  try {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+    firebaseOk = true;
+  } catch (e) {
+    console.error('Firebase no se pudo iniciar:', e);
+  }
 </script>
 <style>
   :root{
@@ -378,10 +386,12 @@ async function saveConfig(percent){
   cashbackPercent = percent;
 }
 async function getClient(phone){
+  lastDbError = null;
   try{
+    if(!firebaseOk){ throw new Error('Firebase no disponible'); }
     const doc = await db.collection('clients').doc(phone).get();
     return doc.exists ? doc.data() : null;
-  }catch(e){ return null; }
+  }catch(e){ lastDbError = e; console.error(e); return null; }
 }
 async function saveClient(client){
   await db.collection('clients').doc(client.phone).set(client);
@@ -836,7 +846,8 @@ async function handleSearch(rawValue){
     const phone = credMatch[1];
     const client = await getClient(phone);
     if(client){ renderClient(client, true); }
-    else { showToast('Código no reconocido'); }
+    else if(lastDbError){ showToast('No hay conexión con la base de datos. Revisa internet e intenta de nuevo.'); }
+    else { showToast('Código no reconocido: ese cliente no está registrado'); }
     return;
   }
 
@@ -1036,6 +1047,7 @@ window.addEventListener('hashchange', routeByHash);
 
 function waitForAuth(){
   return new Promise((resolve)=>{
+    if(!firebaseOk){ resolve(null); return; }
     firebase.auth().onAuthStateChanged((user)=>{
       if(user){ resolve(user); }
       else { firebase.auth().signInAnonymously().catch(e=>{
@@ -1085,6 +1097,7 @@ document.addEventListener('keydown', (e)=>{
 })();
 
 (async function init(){
+  if(!firebaseOk){ showToast('No se pudo conectar con la base de datos. Abre la app desde su enlace de GitHub y revisa tu internet.'); }
   await waitForAuth();
   await getConfig();
   await routeByHash();
