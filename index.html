@@ -232,6 +232,7 @@
       <span>Escanear código del cliente</span>
     </button>
 
+    <div class="hint" id="scannerHint" style="text-align:center;margin:0 0 6px;">Lector físico activo: solo escanea el QR del cliente, sin tocar nada.</div>
     <button class="link-btn manual-toggle" id="manualToggle">Buscar por teléfono en su lugar</button>
     <div class="search-box" id="manualSearchBox" style="display:none;">
       <input id="phoneInput" type="text" inputmode="numeric" placeholder="Teléfono del cliente">
@@ -830,7 +831,7 @@ async function handleSearch(rawValue){
   const raw = (rawValue !== undefined ? rawValue : phoneInput.value).trim();
   if(!raw){ showToast('Escribe o escanea un código'); return; }
 
-  const credMatch = raw.match(/^FRL-(\d{8,15})$/i);
+  const credMatch = raw.match(/^FRL[^A-Za-z0-9]?(\d{8,15})$/i);
   if(credMatch){
     const phone = credMatch[1];
     const client = await getClient(phone);
@@ -1044,6 +1045,44 @@ function waitForAuth(){
     });
   });
 }
+
+// ---- Lector físico (USB/Bluetooth): escribe el código como un teclado y termina con Enter ----
+let scanBuffer = '';
+let scanLastKey = 0;
+document.addEventListener('keydown', (e)=>{
+  const staff = document.getElementById('staffApp');
+  if(!staff || staff.style.display === 'none') return;
+  if(document.querySelector('.overlay.show') || document.getElementById('camOverlay').classList.contains('show')) return;
+  const t = e.target;
+  if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  const now = Date.now();
+  if(now - scanLastKey > 120){ scanBuffer = ''; }
+  scanLastKey = now;
+  if(e.key === 'Enter'){
+    const code = scanBuffer;
+    scanBuffer = '';
+    if(/^FRL[^A-Za-z0-9]?\d{8,15}$/i.test(code)){
+      e.preventDefault();
+      handleSearch(code);
+    }
+    return;
+  }
+  if(e.key && e.key.length === 1){ scanBuffer += e.key; }
+});
+
+// Si el equipo no tiene cámara, lo decimos claro en vez de dejar un botón que falla
+(async function checkCamera(){
+  try{
+    if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if(!devices.some(d => d.kind === 'videoinput')){
+      const btn = document.getElementById('camBtn');
+      btn.style.opacity = '0.45';
+      btn.querySelector('span:last-child').textContent = 'Este equipo no tiene cámara';
+      document.getElementById('scannerHint').textContent = 'Usa el lector físico: solo escanea el QR del cliente, sin tocar nada.';
+    }
+  }catch(e){}
+})();
 
 (async function init(){
   await waitForAuth();
